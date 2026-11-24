@@ -78,6 +78,8 @@ remove everything. **Sign out** removes the selected channel's sign-in.
 ## Limits
 
 - TikTok changes its site often. If downloads stop working, run `install.bat` again to update yt-dlp.
+  If a download fails with *"Unexpected response from webpage request"*, the browser-impersonation package
+  (`curl_cffi`) is missing: `install.bat` installs it.
 - YouTube's API caps uploads per project per day. You can see your quota under **APIs & Services → Quotas**.
 - Music added from TikTok's sound library is licensed for TikTok, not YouTube. Expect a Content ID claim or
   muted audio on those.

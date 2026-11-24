@@ -154,6 +154,15 @@ def fetch(url, progress=None) -> Video:
         "noprogress": True,
         "progress_hooks": [hook],
     }
+    # TikTok answers a plain request with "Unexpected response from webpage request": it wants a real browser's
+    # handshake, which yt-dlp can copy when curl_cffi is installed (it is in requirements.txt)
+    try:
+        import curl_cffi  # noqa: F401
+        from yt_dlp.networking.impersonate import ImpersonateTarget
+
+        opts["impersonate"] = ImpersonateTarget.from_str("chrome")
+    except ImportError:
+        pass  # (without it, downloads may fail: run install.bat again)
     with yt_dlp.YoutubeDL(opts) as y:
         info = y.extract_info(clean_url(url), download=True)
         path = y.prepare_filename(info)
