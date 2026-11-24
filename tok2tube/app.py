@@ -203,11 +203,12 @@ class VideoCard(ctk.CTkFrame):
             on_done(True)
 
         def bad(e):
+            core.log(f"upload failed for {self.url}: {e!r}")
+            if isinstance(e, core.NotSignedIn):
+                self.app.set_account(None, str(e))  # (this re-checks every card, so the error goes on after it)
             self.check.configure(state="normal")
             self.set_status("Upload failed", RED)
             self.note.configure(text=f"⚠ {e}", text_color=RED)
-            if isinstance(e, core.NotSignedIn):
-                self.app.set_account(None)
             on_done(False)
 
         run_bg(core.upload, v, privacy, when, self.app.settings["category"], prog, done=ok, fail=bad, widget=self)
