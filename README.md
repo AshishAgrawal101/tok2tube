@@ -14,7 +14,10 @@ between.
 - The caption becomes the description, its first line the title and its hashtags the tags. You can edit
   every field before uploading.
 - Private by default. Choose unlisted or public, or schedule a time.
-- Remembers what it has posted, so nothing goes up twice. A **Posted** tab links each video to its TikTok
+- Several YouTube channels: **+ Add account** for each one, then pick which channel to upload to from the
+  dropdown at the top. Every Google account you add must be a test user in your Google Cloud project (see
+  the setup below). A Google account with brand channels asks which channel when you sign in.
+- Remembers what it has posted on each channel, so nothing goes up twice. A **Posted** tab links each video to its TikTok
   and its YouTube copy.
 - Warns you about the things that trip uploads up:
   - TikTok-library music, which YouTube may claim or mute;
@@ -51,7 +54,7 @@ It takes about 10 minutes, once:
 4. **APIs & Services → Credentials → Create credentials → OAuth client ID**: application type **Desktop app**
    → **Create** → **Download JSON**.
 5. Open Tok2Tube → **Settings → Choose client_secret.json…**, pick the file you downloaded, then click
-   **Sign in to YouTube**.
+   **+ Add account**.
    - Google shows *"Google hasn't verified this app"*. That's your own app, so click **Advanced → Go to …**.
    - Windows sometimes saves the file as `client_secret.json.json`. Tok2Tube doesn't mind the name.
 
@@ -70,7 +73,7 @@ for your own account).
 
 Nothing personal is stored next to the code. Your Google client file, your sign-in token, the downloads and
 the posted history live in `%APPDATA%\Tok2Tube` (**Settings → Open data folder**). Delete that folder to
-remove everything. **Sign out** removes the token.
+remove everything. **Sign out** removes the selected channel's sign-in.
 
 ## Limits
 

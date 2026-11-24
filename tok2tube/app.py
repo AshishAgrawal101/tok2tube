@@ -123,19 +123,28 @@ class VideoCard(ctk.CTkFrame):
         self.title.insert(0, v.title)
         self.desc.insert("1.0", v.description)
         self.tags.insert(0, v.tags)
+        self.recheck()
+        if v.thumbnail:
+            run_bg(self.load_thumb, v.thumbnail, done=self.show_thumb, widget=self)
+
+    def recheck(self):
+        """The warnings, and whether this TikTok is already on the selected channel."""
+        v = self.video
+        if v is None or self.link:
+            return
         notes = v.warnings()
         done = core.already_posted(v.id)
         if done:
             notes.insert(0, f"Already posted: {done['url']}. Left unchecked so it doesn't go up twice "
                             "(tick it to post it again anyway).")
             self.check.deselect()
+        elif not v.watermarked:
+            self.check.select()
         self.note.configure(text="\n".join("⚠ " + n for n in notes))
         if v.watermarked:
             self.check.deselect()
             self.check.configure(state="disabled")
         self.set_status("Ready", GREEN)
-        if v.thumbnail:
-            run_bg(self.load_thumb, v.thumbnail, done=self.show_thumb, widget=self)
 
     def fetch_failed(self, e):
         self.check.deselect()
@@ -313,10 +322,17 @@ class App(ctk.CTk):
                                                                                         padx=16, pady=10)
         self.account = ctk.CTkLabel(bar, text="", anchor="e")
         self.account.grid(row=0, column=1, sticky="e", padx=8)
-        self.sign_btn = ctk.CTkButton(bar, text="Sign in to YouTube", width=150, command=self.sign_in)
-        self.sign_btn.grid(row=0, column=2, padx=4)
+        # the channel uploads go to: every signed-in channel, switchable
+        self.acc_ids = {}
+        self.acc_menu = ctk.CTkOptionMenu(bar, values=["(none)"], width=190, command=self.pick_account)
+        self.acc_menu.grid(row=0, column=2, padx=4)
+        self.add_btn = ctk.CTkButton(bar, text="+ Add account", width=110, command=self.sign_in)
+        self.add_btn.grid(row=0, column=3, padx=4)
+        self.out_btn = ctk.CTkButton(bar, text="Sign out", width=80, fg_color="transparent", border_width=1,
+                                     text_color=("gray10", "gray90"), command=self.sign_out)
+        self.out_btn.grid(row=0, column=4, padx=4)
         ctk.CTkButton(bar, text="Settings", width=90, fg_color="transparent", border_width=1,
-                      text_color=("gray10", "gray90"), command=lambda: SettingsWindow(self)).grid(row=0, column=3,
+                      text_color=("gray10", "gray90"), command=lambda: SettingsWindow(self)).grid(row=0, column=5,
                                                                                                  padx=(4, 16))
 
         inp = ctk.CTkFrame(self, fg_color="transparent")
@@ -354,16 +370,36 @@ class App(ctk.CTk):
         if not core.has_client():
             self.set_account(None, "First time? Open Settings and add your Google client file.")
             return
-        self.account.configure(text="Checking YouTube sign-in…")
-        run_bg(core.channel, done=self.set_account, fail=lambda e: self.set_account(None), widget=self)
+        self.account.configure(text="Checking YouTube sign-in…", text_color=("gray10", "gray90"))
+        run_bg(core.channel, done=self.set_account, fail=lambda e: self.set_account(None, str(e)), widget=self)
+
+    def fill_accounts(self):
+        accs = core.accounts()
+        self.acc_ids = {}
+        for cid, title in accs:
+            label = title if title not in self.acc_ids else f"{title} ({cid[-4:]})"
+            self.acc_ids[label] = cid
+        labels = list(self.acc_ids) or ["(none)"]
+        self.acc_menu.configure(values=labels)
+        self.acc_menu.set(labels[0])  # (the active one comes first)
+        self.acc_menu.configure(state="normal" if self.acc_ids else "disabled")
+        self.out_btn.configure(state="normal" if self.acc_ids else "disabled")
 
     def set_account(self, name, hint=None):
+        self.fill_accounts()
         if name:
-            self.account.configure(text=f"Signed in: {name}", text_color=GREEN)
-            self.sign_btn.configure(text="Sign out", command=self.sign_out)
+            self.account.configure(text="Uploading to:", text_color=GREEN)
         else:
             self.account.configure(text=hint or "Not signed in to YouTube", text_color=ORANGE)
-            self.sign_btn.configure(text="Sign in to YouTube", command=self.sign_in)
+        self.refresh_history()
+        for c in self.cards:  # (whether each is already on this channel)
+            c.recheck()
+
+    def pick_account(self, label):
+        cid = self.acc_ids.get(label)
+        if cid:
+            core.set_active(cid)
+            self.check_account()
 
     def sign_in(self):
         if not core.has_client():
@@ -373,12 +409,15 @@ class App(ctk.CTk):
             return
         self.account.configure(text="Finish signing in in your browser…", text_color=ORANGE)
         run_bg(core.sign_in, done=self.set_account,
-               fail=lambda e: (self.set_account(None), messagebox.showerror("Tok2Tube", f"Sign-in failed:\n{e}")),
+               fail=lambda e: (self.set_account(None), messagebox.showerror("Tok2Tube", f"Sign-in failed: {e}")),
                widget=self)
 
     def sign_out(self):
+        _, name = core.active_account()
+        if name and not messagebox.askyesno("Tok2Tube", f"Sign out of {name}?"):
+            return
         core.sign_out()
-        self.set_account(None)
+        self.check_account() if core.accounts() else self.set_account(None)
 
     # -- queue
     def fetch(self):
@@ -433,6 +472,8 @@ class App(ctk.CTk):
             row.grid(row=i, column=0, sticky="ew", pady=3)
             row.grid_columnconfigure(0, weight=1)
             ctk.CTkLabel(row, text=p.get("title") or tid, anchor="w").grid(row=0, column=0, sticky="w", padx=10)
+            ctk.CTkLabel(row, text=p.get("channel_title") or "", text_color=("gray35", "gray65"),
+                         width=150, anchor="e").grid(row=0, column=4, padx=(0, 8))
             ctk.CTkLabel(row, text=p.get("privacy", ""), width=70).grid(row=0, column=1)
             ctk.CTkButton(row, text="YouTube", width=80,
                           command=lambda u=p["url"]: webbrowser.open(u)).grid(row=0, column=2, padx=4, pady=4)

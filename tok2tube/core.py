@@ -2,7 +2,7 @@
 
 Everything personal lives in the data folder (see DATA below), never next to the code:
   client_secret.json   your Google OAuth "Desktop app" client (you download it from Google Cloud)
-  token.json           your YouTube sign-in, written by sign_in()
+  accounts/<id>.json   one YouTube sign-in per channel (accounts.json: names and which is active)
   posted.json          TikTok id -> YouTube video, so nothing is posted twice
   downloads/           the downloaded videos and their info
 """
@@ -18,7 +18,9 @@ from dataclasses import asdict, dataclass, field
 APP = "Tok2Tube"
 DATA = os.path.join(os.environ.get("APPDATA") or os.path.expanduser("~/.config"), APP)
 CLIENT = os.path.join(DATA, "client_secret.json")
-TOKEN = os.path.join(DATA, "token.json")
+TOKEN = os.path.join(DATA, "token.json")  # (0.1's single sign-in, moved into accounts/ on first run)
+ACCOUNTS = os.path.join(DATA, "accounts.json")
+ACCOUNTS_DIR = os.path.join(DATA, "accounts")
 POSTED = os.path.join(DATA, "posted.json")
 SETTINGS = os.path.join(DATA, "settings.json")
 DOWNLOADS = os.path.join(DATA, "downloads")
@@ -199,21 +201,86 @@ class NotSignedIn(Exception):
     pass
 
 
-def _creds():
+def _token_path(acc):
+    return os.path.join(ACCOUNTS_DIR, f"{acc}.json")
+
+
+def _accounts_state():
+    st = _read_json(ACCOUNTS, {"active": None, "names": {}})
+    st.setdefault("names", {})
+    return st
+
+
+def _load_creds(path):
     from google.auth.transport.requests import Request
     from google.oauth2.credentials import Credentials
 
-    c = Credentials.from_authorized_user_file(TOKEN, SCOPES) if os.path.exists(TOKEN) else None
+    c = Credentials.from_authorized_user_file(path, SCOPES) if os.path.exists(path) else None
     if c and c.expired and c.refresh_token:
         try:
             c.refresh(Request())
-            with open(TOKEN, "w", encoding="utf-8") as f:
+            with open(path, "w", encoding="utf-8") as f:
                 f.write(c.to_json())
         except Exception as e:  # an expired test-mode token (7 days) or a revoked one
             raise NotSignedIn(f"Sign-in expired ({e.__class__.__name__}). Sign in again.") from e
     if not c or not c.valid:
         raise NotSignedIn("Not signed in to YouTube.")
     return c
+
+
+def _whoami(creds):
+    from googleapiclient.discovery import build
+
+    yt = build("youtube", "v3", credentials=creds, cache_discovery=False)
+    items = yt.channels().list(part="snippet", mine=True).execute().get("items", [])
+    if not items:
+        raise NotSignedIn("That Google account has no YouTube channel.")
+    return items[0]["id"], items[0]["snippet"]["title"]
+
+
+def _migrate():
+    """0.1 kept one token.json: move it into the accounts folder."""
+    if os.path.exists(TOKEN) and not _accounts_state()["names"]:
+        try:
+            cid, title = _whoami(_load_creds(TOKEN))
+        except Exception:  # noqa: BLE001 (expired: just sign in again)
+            return
+        os.makedirs(ACCOUNTS_DIR, exist_ok=True)
+        os.replace(TOKEN, _token_path(cid))
+        _write_json(ACCOUNTS, {"active": cid, "names": {cid: title}})
+        posted = load_posted()
+        for p in posted.values():
+            p.setdefault("channel", cid)
+            p.setdefault("channel_title", title)
+        save_posted(posted)
+
+
+def accounts():
+    """[(channel_id, title)] of every signed-in channel; the active one first."""
+    _migrate()
+    st = _accounts_state()
+    out = [(k, v) for k, v in st["names"].items() if os.path.exists(_token_path(k))]
+    out.sort(key=lambda kv: kv[0] != st["active"])
+    return out
+
+
+def active_account():
+    st = _accounts_state()
+    a = st.get("active")
+    return (a, st["names"].get(a)) if a and os.path.exists(_token_path(a)) else (None, None)
+
+
+def set_active(cid):
+    st = _accounts_state()
+    st["active"] = cid
+    _write_json(ACCOUNTS, st)
+
+
+def _creds():
+    cid, _ = active_account()
+    if not cid:
+        raise NotSignedIn("Not signed in to YouTube.")
+    return _load_creds(_token_path(cid))
 
 
 def has_client():
@@ -230,22 +297,37 @@ def set_client(path):
 
 
 def sign_in():
+    """Add an account (or refresh one): opens the browser, makes it the active channel, returns its title."""
     from google_auth_oauthlib.flow import InstalledAppFlow
 
     if not has_client():
         raise NotSignedIn("Add your Google client file first (Settings).")
     ensure_data()
     flow = InstalledAppFlow.from_client_secrets_file(CLIENT, SCOPES)
-    c = flow.run_local_server(port=0, open_browser=True,
+    c = flow.run_local_server(port=0, open_browser=True, prompt="select_account consent",
                               success_message="Tok2Tube is signed in. You can close this tab.")
-    with open(TOKEN, "w", encoding="utf-8") as f:
+    cid, title = _whoami(c)
+    os.makedirs(ACCOUNTS_DIR, exist_ok=True)
+    with open(_token_path(cid), "w", encoding="utf-8") as f:
         f.write(c.to_json())
-    return channel()
+    st = _accounts_state()
+    st["names"][cid] = title
+    st["active"] = cid
+    _write_json(ACCOUNTS, st)
+    return title
 
 
 def sign_out():
-    if os.path.exists(TOKEN):
-        os.remove(TOKEN)
+    """Remove the active account; the next one (if any) becomes active."""
+    cid, _ = active_account()
+    st = _accounts_state()
+    if cid:
+        if os.path.exists(_token_path(cid)):
+            os.remove(_token_path(cid))
+        st["names"].pop(cid, None)
+    rest = [k for k in st["names"] if os.path.exists(_token_path(k))]
+    st["active"] = rest[0] if rest else None
+    _write_json(ACCOUNTS, st)
 
 
 def _yt():
@@ -255,9 +337,10 @@ def _yt():
 
 
 def channel():
-    """The signed-in channel's title, or raises NotSignedIn."""
-    items = _yt().channels().list(part="snippet", mine=True).execute().get("items", [])
-    return items[0]["snippet"]["title"] if items else "(no channel on this account)"
+    """The active channel's title (checking its sign-in still works), or raises NotSignedIn."""
+    _migrate()
+    _creds()
+    return active_account()[1]
 
 
 def upload(v: Video, privacy="private", publish_at=None, category="20", progress=None):
@@ -285,14 +368,21 @@ def upload(v: Video, privacy="private", publish_at=None, category="20", progress
         progress(1.0)
     res = {"id": resp["id"], "url": f"https://youtu.be/{resp['id']}", "privacy": body["status"]["privacyStatus"],
            "publishAt": publish_at}
+    cid, ctitle = active_account()
     posted = load_posted()
-    posted[v.id] = {**res, "tiktok": v.url, "title": v.title}
+    posted[f"{v.id}@{cid}"] = {**res, "tiktok": v.url, "tiktok_id": v.id, "title": v.title, "channel": cid,
+                               "channel_title": ctitle}
     save_posted(posted)
     return res
 
 
 def already_posted(tiktok_id):
-    return load_posted().get(tiktok_id)
+    """Its record if this TikTok is already on the active channel."""
+    cid, _ = active_account()
+    for key, p in load_posted().items():
+        if (p.get("tiktok_id") or key.split("@")[0]) == tiktok_id and p.get("channel", cid) == cid:
+            return p
+    return None
 
 
 def open_data_folder():
