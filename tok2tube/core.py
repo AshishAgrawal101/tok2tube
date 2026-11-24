@@ -38,6 +38,18 @@ DEFAULT_SETTINGS = {
 }
 
 
+def log(msg):
+    """A line in tok2tube.log in the data folder (what happened at start, sign-in errors)."""
+    try:
+        ensure_data()
+        from datetime import datetime
+
+        with open(os.path.join(DATA, "tok2tube.log"), "a", encoding="utf-8") as f:
+            f.write(f"{datetime.now():%Y-%m-%d %H:%M:%S} {msg}\n")
+    except OSError:
+        pass
+
+
 def ensure_data():
     os.makedirs(DOWNLOADS, exist_ok=True)
 

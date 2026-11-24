@@ -367,11 +367,12 @@ class App(ctk.CTk):
 
     # -- account
     def check_account(self):
+        core.log(f"start: data={core.DATA} client={core.has_client()} accounts={core.accounts()}")
         if not core.has_client():
             self.set_account(None, "First time? Open Settings and add your Google client file.")
             return
         self.account.configure(text="Checking YouTube sign-in…", text_color=("gray10", "gray90"))
-        run_bg(core.channel, done=self.set_account, fail=lambda e: self.set_account(None, str(e)), widget=self)
+        run_bg(core.channel, done=self.set_account, fail=lambda e: (core.log(f"sign-in check failed: {e!r}"), self.set_account(None, str(e))), widget=self)
 
     def fill_accounts(self):
         accs = core.accounts()
