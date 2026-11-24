@@ -485,7 +485,26 @@ class App(ctk.CTk):
                                                                                          padx=(0, 8))
 
 
+def already_running():
+    """One Tok2Tube at a time: two windows share one sign-in and lose track of it (seen 2026-11-24).
+    A named mutex on Windows; elsewhere, no check."""
+    if os.name != "nt":
+        return False
+    import ctypes
+
+    kernel = ctypes.windll.kernel32
+    kernel.CreateMutexW(None, False, "Local\\Tok2TubeSingleInstance")
+    return kernel.GetLastError() == 183  # ERROR_ALREADY_EXISTS (the handle is kept until the process exits)
+
+
 def main():
+    if already_running():
+        import tkinter
+
+        root = tkinter.Tk()
+        root.withdraw()
+        messagebox.showinfo("Tok2Tube", "Tok2Tube is already open. Look for its window on the taskbar.")
+        return
     ctk.set_appearance_mode("system")
     ctk.set_default_color_theme("blue")
     App().mainloop()
