@@ -44,8 +44,13 @@ def log(msg):
         ensure_data()
         from datetime import datetime
 
-        with open(os.path.join(DATA, "tok2tube.log"), "a", encoding="utf-8") as f:
-            f.write(f"{datetime.now():%Y-%m-%d %H:%M:%S} {msg}\n")
+        line = f"{datetime.now():%Y-%m-%d %H:%M:%S} {msg}\n"
+
+        def write():
+            with open(os.path.join(DATA, "tok2tube.log"), "a", encoding="utf-8") as f:
+                f.write(line)
+
+        _retry(write)
     except OSError:
         pass
 
@@ -249,6 +254,14 @@ class NotSignedIn(Exception):
     pass
 
 
+class SignInExpired(NotSignedIn):
+    """Google ended the sign-in (after 7 days while the Google app is in Testing, or it was revoked)."""
+
+    def __init__(self, msg, channel_id=None, channel_title=None):
+        super().__init__(msg)
+        self.channel_id, self.channel_title = channel_id, channel_title
+
+
 def _token_path(acc):
     return os.path.join(ACCOUNTS_DIR, f"{acc}.json")
 
@@ -270,7 +283,10 @@ def _load_creds(path):
             with open(path, "w", encoding="utf-8") as f:
                 f.write(c.to_json())
         except Exception as e:  # an expired test-mode token (7 days) or a revoked one
-            raise NotSignedIn(f"Sign-in expired ({e.__class__.__name__}). Sign in again.") from e
+            cid = os.path.splitext(os.path.basename(path))[0]
+            title = _accounts_state()["names"].get(cid)
+            raise SignInExpired(f"The YouTube sign-in for {title or 'this channel'} has expired. Sign in again.",
+                                cid, title) from e
     if not c or not c.valid:
         raise NotSignedIn("Not signed in to YouTube.")
     return c
@@ -394,6 +410,53 @@ def channel():
     _migrate()
     _creds()
     return active_account()[1]
+
+
+def _video_id(p):
+    """A posted entry's YouTube id, whichever version of Tok2Tube wrote it (None when it can't be told)."""
+    vid = p.get("id") or p.get("youtube")
+    if not vid and p.get("url"):
+        vid = p["url"].rstrip("/").rsplit("/", 1)[-1].split("?")[0] or None
+    return vid
+
+
+def refresh_posted():
+    """Read each posted video's current privacy back from YouTube (a change made in YouTube Studio shows up here;
+    a deleted video is marked "deleted"). Returns how many entries changed. Channels whose sign-in has expired
+    are skipped."""
+    from googleapiclient.discovery import build
+
+    posted = load_posted()
+    by_channel = {}
+    for key, p in posted.items():
+        by_channel.setdefault(p.get("channel"), []).append(key)
+    changed = 0
+    for cid, keys in by_channel.items():
+        if not cid or not os.path.exists(_token_path(cid)):
+            continue
+        try:
+            yt = build("youtube", "v3", credentials=_load_creds(_token_path(cid)), cache_discovery=False)
+        except NotSignedIn:
+            continue
+        # (0.1 saved the video id as "youtube"; either way the link ends with it)
+        keys = [k for k in keys if _video_id(posted[k])]
+        for i in range(0, len(keys), 50):
+            chunk = keys[i:i + 50]
+            ids = [_video_id(posted[k]) for k in chunk]
+            found = {v["id"]: v["status"] for v in
+                     yt.videos().list(part="status", id=",".join(ids)).execute().get("items", [])}
+            for k in chunk:
+                p = posted[k]
+                st = found.get(_video_id(p))
+                now = (st or {}).get("privacyStatus", "deleted")
+                if p.get("privacy") != now:
+                    p["privacy"] = now
+                    changed += 1
+                if st and not st.get("publishAt") and p.get("publishAt"):
+                    p["publishAt"] = None  # (a scheduled one that has gone out)
+    if changed:
+        save_posted(posted)
+    return changed
 
 
 def upload(v: Video, privacy="private", publish_at=None, category="20", progress=None):

@@ -205,7 +205,9 @@ class VideoCard(ctk.CTkFrame):
 
         def bad(e):
             core.log(f"upload failed for {self.url}: {e!r}")
-            if isinstance(e, core.NotSignedIn):
+            if isinstance(e, core.SignInExpired):
+                self.app.expired(e)
+            elif isinstance(e, core.NotSignedIn):
                 self.app.set_account(None, str(e))  # (this re-checks every card, so the error goes on after it)
             self.check.configure(state="normal")
             self.set_status("Upload failed", RED)
@@ -354,7 +356,14 @@ class App(ctk.CTk):
         self.queue = ctk.CTkScrollableFrame(self.tabs.add("Queue"), fg_color="transparent")
         self.queue.pack(fill="both", expand=True)
         self.queue.grid_columnconfigure(0, weight=1)
-        self.history = ctk.CTkScrollableFrame(self.tabs.add("Posted"), fg_color="transparent")
+        posted_tab = self.tabs.add("Posted")
+        top = ctk.CTkFrame(posted_tab, fg_color="transparent")
+        top.pack(fill="x")
+        self.refresh_note = ctk.CTkLabel(top, text="", anchor="w", text_color=("gray35", "gray65"))
+        self.refresh_note.pack(side="left", padx=4)
+        self.refresh_btn = ctk.CTkButton(top, text="Refresh from YouTube", width=160, command=self.refresh_posted)
+        self.refresh_btn.pack(side="right", pady=(0, 4))
+        self.history = ctk.CTkScrollableFrame(posted_tab, fg_color="transparent")
         self.history.pack(fill="both", expand=True)
         self.history.grid_columnconfigure(0, weight=1)
 
@@ -368,6 +377,7 @@ class App(ctk.CTk):
 
         self.refresh_history()
         self.check_account()
+        self.after(1500, self.refresh_posted, True)
 
     # -- account
     def check_account(self):
@@ -376,7 +386,22 @@ class App(ctk.CTk):
             self.set_account(None, "First time? Open Settings and add your Google client file.")
             return
         self.account.configure(text="Checking YouTube sign-in…", text_color=("gray10", "gray90"))
-        run_bg(core.channel, done=self.set_account, fail=lambda e: (core.log(f"sign-in check failed: {e!r}"), self.set_account(None, str(e))), widget=self)
+        def failed(e):
+            core.log(f"sign-in check failed: {e!r}")
+            self.set_account(None, str(e))
+            if isinstance(e, core.SignInExpired):
+                self.expired(e)
+
+        run_bg(core.channel, done=self.set_account, fail=failed, widget=self)
+
+    def expired(self, e):
+        """Google ended a sign-in: say why, and offer to sign that channel in again."""
+        if messagebox.askyesno("Tok2Tube", f"{e}\n\nWhile your Google app is in Testing, Google ends sign-ins after "
+                                           "7 days (Publish app on its Branding page stops that).\n\n"
+                                           "Sign in again now?"):
+            self.sign_in()
+        else:
+            self.set_account(None, str(e))
 
     def fill_accounts(self):
         accs = core.accounts()
@@ -465,6 +490,26 @@ class App(ctk.CTk):
         next_one()
 
     # -- history
+    def refresh_posted(self, quiet=False):
+        """Each posted video's privacy as YouTube has it now (changed in Studio, gone public on schedule, deleted)."""
+        if not core.load_posted():
+            return
+        self.refresh_btn.configure(state="disabled")
+        if not quiet:
+            self.refresh_note.configure(text="Checking YouTube…")
+
+        def done(n):
+            self.refresh_btn.configure(state="normal")
+            self.refresh_note.configure(text=f"Up to date ({n} changed)" if n else "Up to date")
+            self.refresh_history()
+
+        def fail(e):
+            core.log(f"refresh failed: {e!r}")
+            self.refresh_btn.configure(state="normal")
+            self.refresh_note.configure(text="Couldn't check YouTube right now")
+
+        run_bg(core.refresh_posted, done=done, fail=fail, widget=self)
+
     def refresh_history(self):
         for w in self.history.winfo_children():
             w.destroy()
@@ -495,9 +540,10 @@ def already_running():
         return False
     import ctypes
 
-    kernel = ctypes.windll.kernel32
-    kernel.CreateMutexW(None, False, "Local\\Tok2TubeSingleInstance")
-    return kernel.GetLastError() == 183  # ERROR_ALREADY_EXISTS (the handle is kept until the process exits)
+    kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+    global _mutex  # (kept for the life of the process: the name is held while it exists)
+    _mutex = kernel.CreateMutexW(None, False, "Local\\Tok2TubeSingleInstance")
+    return ctypes.get_last_error() == 183  # ERROR_ALREADY_EXISTS
 
 
 def errors_to_log():

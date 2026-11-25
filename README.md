@@ -18,7 +18,8 @@ between.
   dropdown at the top. Every Google account you add must be a test user in your Google Cloud project (see
   the setup below). A Google account with brand channels asks which channel when you sign in.
 - Remembers what it has posted on each channel, so nothing goes up twice. A **Posted** tab links each video to its TikTok
-  and its YouTube copy.
+  and its YouTube copy, and keeps its privacy up to date with YouTube (a change you make in YouTube Studio, a
+  scheduled video going live, a deleted one). It checks at start, or click **Refresh from YouTube**.
 - Warns you about the things that trip uploads up:
   - TikTok-library music, which YouTube may claim or mute;
   - videos over 3 minutes, which aren't Shorts;
@@ -58,8 +59,8 @@ It takes about 10 minutes, once:
    - Google shows *"Google hasn't verified this app"*. That's your own app, so click **Advanced → Go to …**.
    - Windows sometimes saves the file as `client_secret.json.json`. Tok2Tube doesn't mind the name.
 
-While your app is in **Testing**, Google ends the sign-in after 7 days; Tok2Tube tells you, and you click
-**Sign in** again. To avoid that, fill in the **Branding** page and click **Publish app** (no review is needed
+While your app is in **Testing**, Google ends the sign-in after 7 days. Tok2Tube notices, says which channel
+it was, and offers to sign it in again in one click. To avoid that, fill in the **Branding** page and click **Publish app** (no review is needed
 for your own account).
 
 ## Use
@@ -76,6 +77,9 @@ the posted history live in `%APPDATA%\Tok2Tube` (**Settings → Open data folder
 remove everything. **Sign out** removes the selected channel's sign-in.
 
 ## Limits
+
+- Only one Tok2Tube window runs at a time. Opening it again just says it's already open.
+- If something goes wrong, the reason is in `tok2tube.log` in the data folder (**Settings → Open data folder**).
 
 - TikTok changes its site often. If downloads stop working, run `install.bat` again to update yt-dlp.
   If a download fails with *"Unexpected response from webpage request"*, the browser-impersonation package
