@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import io
 import os
+import sys
 import threading
 import traceback
 import urllib.request
@@ -303,6 +304,8 @@ class SettingsWindow(ctk.CTkToplevel):
 class App(ctk.CTk):
     def __init__(self):
         super().__init__()
+        self.report_callback_exception = lambda *e: core.log("window error: " + "".join(
+            traceback.format_exception(*e)))
         core.ensure_data()
         self.settings = core.load_settings()
         self.cards: list[VideoCard] = []
@@ -497,7 +500,16 @@ def already_running():
     return kernel.GetLastError() == 183  # ERROR_ALREADY_EXISTS (the handle is kept until the process exits)
 
 
+def errors_to_log():
+    """pythonw has no console, so Python's error output went nowhere. Send it to tok2tube.log instead."""
+    if sys.stderr is None or sys.stdout is None:
+        core.ensure_data()
+        f = open(os.path.join(core.DATA, "tok2tube.log"), "a", encoding="utf-8", buffering=1)  # noqa: SIM115
+        sys.stderr = sys.stdout = f
+
+
 def main():
+    errors_to_log()
     if already_running():
         import tkinter
 

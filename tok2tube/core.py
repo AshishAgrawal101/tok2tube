@@ -54,21 +54,48 @@ def ensure_data():
     os.makedirs(DOWNLOADS, exist_ok=True)
 
 
+def _retry(fn, tries=20):
+    """Windows briefly locks a file that was just written (the virus scanner reads it): try again for about a
+    second before giving up. (2026-11-24: one failed read of accounts.json looked like "no accounts at all", so
+    the window said "Not signed in" with both sign-ins sitting there.)"""
+    import time
+
+    for i in range(tries):
+        try:
+            return fn()
+        except PermissionError:
+            if i == tries - 1:
+                raise
+            time.sleep(0.05)
+
+
 def _read_json(path, default):
-    try:
+    """The file's JSON, or default when it doesn't exist. A file that can't be read is an error, not "empty"."""
+    if not os.path.exists(path):
+        return default
+
+    def read():
         with open(path, encoding="utf-8") as f:
             return json.load(f)
-    except (OSError, ValueError):
+
+    try:
+        return _retry(read)
+    except ValueError:  # half-written or hand-edited: report it, keep going with the default
+        log(f"could not parse {os.path.basename(path)}; using defaults")
         return default
 
 
 def _write_json(path, data):
     ensure_data()
     tmp = path + ".tmp"
-    with open(tmp, "w", encoding="utf-8", newline="") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-        f.write("\n")
-    os.replace(tmp, path)
+
+    def write():
+        with open(tmp, "w", encoding="utf-8", newline="") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+            f.write("\n")
+        os.replace(tmp, path)
+
+    _retry(write)
 
 
 def load_settings():
@@ -300,7 +327,12 @@ def set_active(cid):
 def _creds():
     cid, _ = active_account()
     if not cid:
-        raise NotSignedIn("Not signed in to YouTube.")
+        # (no active one marked but a sign-in on disk: use it rather than claim there is none)
+        accs = accounts()
+        if not accs:
+            raise NotSignedIn("Not signed in to YouTube.")
+        cid = accs[0][0]
+        set_active(cid)
     return _load_creds(_token_path(cid))
 
 
